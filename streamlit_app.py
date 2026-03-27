@@ -2,71 +2,76 @@ import streamlit as st
 import google.generativeai as genai
 import PyPDF2
 from PIL import Image
-import time # Importante para las pausas
+import time
 
-# CONFIGURACIÓN
+# 1. CONFIGURACIÓN ROBUSTA
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    # Usamos la versión estable más ligera para evitar bloqueos
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
-    st.error(f"🔑 Error de llave: {e}")
+    st.error(f"Error de conexión: {e}")
 
 def extraer_texto_pdf(file):
-    pdf_reader = PyPDF2.PdfReader(file)
-    return "".join([p.extract_text() for p in pdf_reader.pages])
+    try:
+        pdf_reader = PyPDF2.PdfReader(file)
+        texto = ""
+        for pagina in pdf_reader.pages:
+            texto += pagina.extract_text() or ""
+        return texto[:10000] # Limitamos el texto para no saturar la memoria
+    except:
+        return "No se pudo leer el PDF"
 
 st.set_page_config(page_title="Agente Selección Comfama", layout="wide")
-st.title("🤖 Agente de Selección: Edición Especial (Con Pausas)")
+st.title("🤖 Analizador de Candidatos (Modo Seguro)")
 
-st.header("1. Definición de la Vacante")
-vacante_txt = st.text_area("Requisitos del cargo:", height=150)
+# INTERFAZ
+vacante_txt = st.text_area("📝 Requisitos de la Vacante:", height=150, placeholder="Pega aquí el perfil...")
+archivos = st.file_uploader("👤 Sube tus 5-8 Hojas de Vida:", type=["pdf", "jpg", "png"], accept_multiple_files=True)
 
-st.header("2. Carga de Candidatos")
-archivos = st.file_uploader("Sube hasta 20 archivos", type=["pdf", "jpg", "png"], accept_multiple_files=True)
-
-if st.button("🚀 INICIAR ANÁLISIS"):
+if st.button("🚀 INICIAR PROCESO"):
     if vacante_txt and archivos:
-        resultados_individuales = []
+        resultados = []
         barra = st.progress(0)
+        status_text = st.empty()
         
         for i, archivo in enumerate(archivos):
-            with st.spinner(f"Analizando a {archivo.name}..."):
-                try:
-                    # Pausa de seguridad para evitar el error 429
-                    time.sleep(3) 
-                    
-                    if archivo.type == "application/pdf":
-                        contenido = extraer_texto_pdf(archivo)
-                        prompt = f"Compara este CV contra esta vacante: {vacante_txt}. CV: {contenido}. Resume Match% y 2 debilidades."
-                        resp = model.generate_content(prompt)
-                    else:
-                        img = Image.open(archivo)
-                        prompt = f"Analiza esta foto de CV contra la vacante: {vacante_txt}. Resume Match% y 2 debilidades."
-                        resp = model.generate_content([prompt, img])
-                    
-                    resultados_individuales.append(f"CANDIDATO: {archivo.name}\n{resp.text}")
-                except Exception as e:
-                    if "429" in str(e) or "ResourceExhausted" in str(e):
-                        st.warning(f"Saturación detectada en {archivo.name}. Esperando 10 segundos para reintentar...")
-                        time.sleep(10) # Pausa más larga si hay error
-                        # Reintento único
-                        resp = model.generate_content(prompt)
-                        resultados_individuales.append(f"CANDIDATO: {archivo.name}\n{resp.text}")
-                    else:
-                        st.error(f"Error en {archivo.name}: {e}")
+            status_text.text(f"Procesando candidato {i+1} de {len(archivos)}: {archivo.name}...")
+            
+            try:
+                # PAUSA OBLIGATORIA: Para que el servidor de Google no nos bloquee
+                time.sleep(6) 
+                
+                if archivo.type == "application/pdf":
+                    cv_texto = extraer_texto_pdf(archivo)
+                    prompt = f"Compara este CV con la Vacante. Vacante: {vacante_txt}. CV: {cv_texto}. Responde breve: Nombre, % Match, y 2 preguntas de entrevista."
+                    response = model.generate_content(prompt)
+                else:
+                    img = Image.open(archivo)
+                    prompt = f"Analiza esta imagen de CV. Vacante: {vacante_txt}. Responde breve: Nombre, % Match, y 2 preguntas de entrevista."
+                    response = model.generate_content([prompt, img])
+                
+                resultados.append(f"--- CANDIDATO: {archivo.name} ---\n{response.text}")
+                st.success(f"✅ {archivo.name} analizado correctamente.")
+                
+            except Exception as e:
+                st.error(f"❌ Error en {archivo.name}: {e}")
+                time.sleep(10) # Pausa extra si hay error
             
             barra.progress((i + 1) / len(archivos))
-
-        st.divider()
-        st.header("📊 Informe Final y Top 5")
         
-        # Pausa final antes del resumen
-        time.sleep(4)
-        resumen_total = "\n\n".join(resultados_individuales)
-        prompt_final = f"Basado en estos análisis: {resumen_total}. Selecciona el Top 5 para la vacante: {vacante_txt} y crea la tabla comparativa con preguntas de entrevista."
-        
-        informe_final = model.generate_content(prompt_final)
-        st.markdown(informe_final.text)
-        st.success("¡Análisis terminado respetando los límites de Google!")
+        # INFORME FINAL
+        if resultados:
+            st.divider()
+            st.header("📊 Informe Comparativo Final")
+            status_text.text("Generando cuadro comparativo final...")
+            time.sleep(5)
+            
+            resumen_total = "\n\n".join(resultados)
+            prompt_final = f"Basado en estos análisis: {resumen_total}. Crea una tabla comparativa con los nombres, el match y selecciona el Top 3 para la vacante: {vacante_txt}."
+            
+            final_resp = model.generate_content(prompt_final)
+            st.markdown(final_resp.text)
+            status_text.text("¡Proceso completado!")
     else:
-        st.warning("Faltan datos para empezar.")
+        st.warning("Faltan datos para iniciar.")
