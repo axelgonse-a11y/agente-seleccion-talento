@@ -2,75 +2,84 @@ import streamlit as st
 import google.generativeai as genai
 import PyPDF2
 from PIL import Image
-import pandas as pd
+import io
 
-# Configuración de Gemini
+# 1. CONFIGURACIÓN DEL MODELO (Versión 2026)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except:
-    st.error("🔑 Error: No se encontró la clave en los Secrets de Streamlit.")
+    # Actualizado a 2.0 para evitar el error 404
+    model = genai.GenerativeModel('gemini-2.0-flash')
+except Exception as e:
+    st.error(f"🔑 Error de configuración: {e}")
 
 def extraer_texto_pdf(file):
     pdf_reader = PyPDF2.PdfReader(file)
     return "".join([p.extract_text() for p in pdf_reader.pages])
 
-st.set_page_config(page_title="Agente Selección Comfama", layout="wide")
-st.title("🏆 Agente de Selección Masiva: El Top 5 de Axel")
+# CONFIGURACIÓN DE LA PÁGINA
+st.set_page_config(page_title="Agente IA Comfama", layout="wide")
 
-# 1. LA VACANTE (Lo que te entrega la gestora)
+st.title("🤖 Agente de Selección Masiva: El Top 5")
+st.write(f"Hola Axel, hoy es {st.date_input('Fecha de análisis', value=None)}. Vamos a priorizar esos perfiles.")
+
+# 2. ENTRADA DE LA VACANTE
 st.header("1. Definición de la Vacante")
-vacante_txt = st.text_area("Pega aquí los requisitos (Ubicación, Experiencia, Género, etc.):", 
-                           placeholder="Ej: Necesito hombre para Chigorodó con 2 años de experiencia...",
+vacante_txt = st.text_area("Pega los requisitos (Ubicación, Exp, Género, etc.):", 
+                           placeholder="Ej: Auxiliar en Chigorodó, mujer, 2 años de experiencia...",
                            height=150)
 
-# 2. LAS HOJAS DE VIDA
-st.header("2. Carga de Candidatos")
-archivos = st.file_uploader("Sube hasta 20 archivos (PDF o Fotos)", 
-                             type=["pdf", "jpg", "png"], 
+# 3. CARGA DE HOJAS DE VIDA
+st.header("2. Carga de Candidatos (Máximo 20)")
+archivos = st.file_uploader("Sube archivos PDF o Fotos (JPG/PNG)", 
+                             type=["pdf", "jpg", "png", "jpeg"], 
                              accept_multiple_files=True)
 
-# 3. EL PROCESO
+# 4. PROCESAMIENTO
 if st.button("🚀 INICIAR ANÁLISIS DE GRUPO"):
     if vacante_txt and archivos:
-        resultados_individuales = []
-        barra = st.progress(0)
-        
-        for i, archivo in enumerate(archivos):
-            with st.spinner(f"Analizando a: {archivo.name}..."):
-                if archivo.type == "application/pdf":
-                    contenido = extraer_texto_pdf(archivo)
-                    instruccion = f"Analiza este CV contra la vacante: {vacante_txt}. Datos del CV: {contenido}. Resume: Nombre, Ubicación, Años Exp, % de Match (0-100)."
-                    resp = model.generate_content(instruccion)
-                else:
-                    img = Image.open(archivo)
-                    instruccion = f"Analiza esta imagen contra la vacante: {vacante_txt}. Resume: Nombre, Ubicación, Años Exp, % de Match (0-100)."
-                    resp = model.generate_content([instruccion, img])
+        if len(archivos) > 20:
+            st.error("Por favor, sube máximo 20 archivos para no saturar el sistema.")
+        else:
+            resultados_individuales = []
+            barra = st.progress(0)
+            
+            for i, archivo in enumerate(archivos):
+                with st.spinner(f"Analizando: {archivo.name}..."):
+                    try:
+                        if archivo.type == "application/pdf":
+                            contenido = extraer_texto_pdf(archivo)
+                            instruccion = f"Analiza este CV contra esta vacante: {vacante_txt}. Datos: {contenido}. Resume: Nombre, Ubicación, Años Exp, % Match."
+                            resp = model.generate_content(instruccion)
+                        else:
+                            img = Image.open(archivo)
+                            instruccion = f"Analiza esta imagen de CV contra esta vacante: {vacante_txt}. Extrae: Nombre, Ubicación, Años Exp, % Match."
+                            resp = model.generate_content([instruccion, img])
+                        
+                        resultados_individuales.append(f"CANDIDATO: {archivo.name}\n{resp.text}")
+                    except Exception as e:
+                        st.error(f"Error procesando {archivo.name}: {e}")
                 
-                resultados_individuales.append(resp.text)
-            barra.progress((i + 1) / len(archivos))
+                barra.progress((i + 1) / len(archivos))
 
-        # --- AQUÍ ESTÁ EL FAMOSO 'PROMPT' DE LOS 5 MEJORES ---
-        st.divider()
-        st.header("📊 Resultado Final y Priorización")
-        
-        resumen_total = "\n".join(resultados_individuales)
-        
-        # Esta es la instrucción maestra para elegir el Top 5
-        prompt_final = f"""
-        De todos estos análisis: {resumen_total}.
-        Identifica a los 5 mejores candidatos para la vacante: {vacante_txt}.
-        
-        Para cada uno de esos 5, entrega:
-        1. **Nombre y Porcentaje de Match.**
-        2. **Análisis de Ubicación:** ¿Es de la zona o tendría problemas de traslado?
-        3. **Vacíos Detectados:** ¿Qué NO puso en la hoja de vida que es importante?
-        4. **3 Preguntas 'Al Hueso':** Preguntas de entrevista para confirmar si sus dudas son reales.
-        """
-        
-        informe_final = model.generate_content(prompt_final)
-        st.write(informe_final.text)
-        st.success("¡Análisis completado, Axel! Ya tienes tu Top 5 listo.")
+            # --- ANÁLISIS FINAL DEL TOP 5 ---
+            st.divider()
+            st.header("📊 Resultado Final y Priorización")
+            
+            resumen_total = "\n\n".join(resultados_individuales)
+            
+            prompt_final = f"""
+            Actúa como un psicólogo senior de selección. Basado en estos análisis: {resumen_total}.
+            Identifica a los 5 mejores candidatos para la vacante: {vacante_txt}.
+            
+            Presenta el informe así:
+            1. **Tabla Comparativa:** Con Nombre, % de Match y Ubicación.
+            2. **Análisis de los 5 mejores:** Explica por qué son los mejores y qué 'vacíos' o dudas encontraste (fechas, falta de datos, etc.).
+            3. **Guía de Entrevista:** 3 preguntas potentes por cada uno para validar sus puntos grises.
+            """
+            
+            informe_final = model.generate_content(prompt_final)
+            st.markdown(informe_final.text)
+            st.success("¡Análisis completado con éxito!")
 
     else:
-        st.warning("Asegúrate de poner la vacante y subir al menos un archivo.")
+        st.warning("Axel, recuerda poner la vacante y subir los archivos.")
