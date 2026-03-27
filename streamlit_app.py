@@ -1,63 +1,82 @@
 import streamlit as st
 import google.generativeai as genai
 import PyPDF2
+from PIL import Image
+import pandas as pd
 
-# Configuración de Gemini
+# Configuración Gemini
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-1.5-flash')
 except:
-    st.error("⚠️ Falta la configuración de la clave en Secrets.")
+    st.error("🔑 Configura la API Key en los Secrets de Streamlit.")
 
-# Función para extraer texto del PDF
-def leer_pdf(file):
+def extraer_texto_pdf(file):
     pdf_reader = PyPDF2.PdfReader(file)
-    texto = ""
-    for pagina in pdf_reader.pages:
-        texto += pagina.extract_text()
-    return texto
+    return "".join([p.extract_text() for p in pdf_reader.pages])
 
-st.set_page_config(page_title="Agente IA - Selección Comfama", layout="wide")
+st.set_page_config(page_title="Agente Selección Comfama", layout="wide")
 
-st.title("🤖 Agente de Selección: Analizador de PDFs")
-st.write("Axel, ahora puedes subir directamente las hojas de vida en formato PDF.")
+st.title("🏆 Agente de Selección Masiva: El Top 5")
+st.write("Axel, este sistema analiza hasta 20 perfiles y prioriza a los mejores para tu entrevista.")
 
-# INTERFAZ
-col1, col2 = st.columns(2)
+# ENTRADA DE LA VACANTE
+vacante_txt = st.text_area("📋 Requisitos de la Vacante (Ubicación, Exp, Sexo, etc.)", height=150)
 
-with col1:
-    st.subheader("📝 Descripción de la Vacante")
-    vacante_txt = st.text_area("Pega los requisitos aquí...", height=250)
+# CARGA MASIVA
+archivos = st.file_uploader("👤 Sube hasta 20 Hojas de Vida (PDF o Imagen)", 
+                             type=["pdf", "jpg", "png"], 
+                             accept_multiple_files=True)
 
-with col2:
-    st.subheader("👤 Hoja de Vida (PDF)")
-    archivo_pdf = st.file_uploader("Sube el PDF del candidato", type=["pdf"])
-
-# PROCESAMIENTO
-if st.button("🚀 ANALIZAR CANDIDATO"):
-    if vacante_txt and archivo_pdf:
-        with st.spinner("Leyendo PDF y analizando con Gemini..."):
-            # 1. Convertimos el PDF a texto
-            cv_txt = leer_pdf(archivo_pdf)
+if st.button("🚀 INICIAR PROCESO DE SELECCIÓN"):
+    if vacante_txt and archivos:
+        if len(archivos) > 20:
+            st.error("Por favor, sube máximo 20 archivos.")
+        else:
+            resultados = []
+            progreso = st.progress(0)
             
-            # 2. Creamos el prompt para Gemini
-            prompt = f"""
-            Actúa como un psicólogo experto en selección. 
-            Analiza esta VACANTE y este CV extraído de un PDF.
-            
-            VACANTE: {vacante_txt}
-            CV: {cv_txt}
-            
-            Entrega un informe con:
-            1. Datos clave (Nombre, contacto, ubicación).
-            2. Análisis de brechas técnico-humanas.
-            3. 3 preguntas sugeridas para la entrevista.
-            """
-            
-            # 3. Le pedimos la respuesta a Gemini
-            response = model.generate_content(prompt)
+            for i, archivo in enumerate(archivos):
+                with st.spinner(f"Analizando a: {archivo.name}..."):
+                    # Extraer contenido según formato
+                    if archivo.type == "application/pdf":
+                        contenido = extraer_texto_pdf(archivo)
+                        prompt = f"Analiza este CV contra la vacante. VACANTE: {vacante_txt}. CV: {contenido}. Extrae en formato JSON: nombre, ubicacion, años_exp, match_porcentaje (0-100), razon_principal."
+                        response = model.generate_content(prompt)
+                    else:
+                        img = Image.open(archivo)
+                        prompt = f"Analiza esta imagen de CV contra la vacante. VACANTE: {vacante_txt}. Extrae en formato JSON: nombre, ubicacion, años_exp, match_porcentaje (0-100), razon_principal."
+                        response = model.generate_content([prompt, img])
+                    
+                    # Guardamos la respuesta (limpiando el texto para que sea legible)
+                    texto_ia = response.text.replace("```json", "").replace("```", "")
+                    resultados.append({"nombre_archivo": archivo.name, "analisis": texto_ia, "raw_file": archivo})
+                
+                progreso.progress((i + 1) / len(archivos))
+
+            # --- MATRIZ COMPARATIVA ---
             st.divider()
-            st.markdown("### 📋 Informe del Agente")
-            st.write(response.text)
+            st.header("📊 Matriz de Priorización")
+            
+            # Aquí le pedimos a Gemini que haga el ranking final de todos los analizados
+            resumen_completo = "\n".join([r['analisis'] for r in resultados])
+            prompt_ranking = f"Basado en estos análisis individuales: {resumen_completo}. Crea una tabla comparativa de los mejores. Devuelve solo los datos de: Nombre, Ubicación, Años Exp, % Match. Ordena por % Match de mayor a menor."
+            tabla_final = model.generate_content(prompt_ranking)
+            st.markdown(tabla_final.text)
+
+            # --- EL TOP 5 Y PREGUNTAS ORIENTADORAS ---
+            st.divider()
+            st.header("🎯 Guía de Entrevista: Los 5 Finalistas")
+            
+            prompt_top5 = f"""
+            Identifica a los 5 mejores candidatos de estos datos: {resumen_completo}.
+            Para cada uno de esos 5, genera 3 preguntas de entrevista específicas.
+            Las preguntas DEBEN basarse en sus 'Red Flags' (vacíos en fechas, si la ubicación no coincide con Chigorodó, si falta el sexo si era requisito, o si hay dudas en su experiencia).
+            Se muy agudo y profesional, como un psicólogo de Comfama.
+            """
+            guia_entrevista = model.generate_content(prompt_top5)
+            st.info("Estas preguntas van directo a los puntos grises detectados por el Agente.")
+            st.write(guia_entrevista.text)
+
     else:
-        st.warning("Asegúrate de pegar la vacante y subir el PDF.")
+        st.warning("Axel, necesito la vacante y los archivos para empezar.")
