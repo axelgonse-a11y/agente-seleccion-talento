@@ -1,58 +1,42 @@
 import streamlit as st
+import google.generativeai as genai
 
-# CONFIGURACIÓN DE PÁGINA
+# Configuración del modelo Gemini
+# La clave se jalará de forma segura desde los "Secrets" de Streamlit
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except:
+    st.error("⚠️ Configura la clave GEMINI_API_KEY en los Secrets de Streamlit.")
+
 st.set_page_config(page_title="Agente IA - Selección Comfama", layout="wide")
 
-# ESTILO PERSONALIZADO
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; background-color: #004b87; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
+st.title("🤖 Agente de Selección con Gemini")
+st.write("Bienvenido, Axel. Analicemos perfiles para el Servicio Público de Empleo.")
 
-st.title("🤖 Agente de Selección Inteligente")
-st.write("Análisis profundo de vacantes vs. candidatos para el Servicio Público de Empleo.")
-
-# INTERFAZ DE ENTRADA
+# Interfaz
 col1, col2 = st.columns(2)
-
 with col1:
-    st.subheader("📝 Descripción de la Vacante")
-    vacante_txt = st.text_area("Pega aquí los requisitos del cargo...", height=300)
-
+    vacante_txt = st.text_area("📝 Descripción de la Vacante", height=300)
 with col2:
-    st.subheader("👤 Hoja de Vida (CV)")
-    cv_txt = st.text_area("Pega aquí el texto de la hoja de vida...", height=300)
+    cv_txt = st.text_area("👤 Texto de la Hoja de Vida", height=300)
 
-# BOTÓN DE ACCIÓN
-if st.button("🚀 INICIAR ANÁLISIS DEL PERFIL"):
+if st.button("🚀 REALIZAR ANÁLISIS PSICOLÓGICO"):
     if vacante_txt and cv_txt:
-        st.divider()
-        st.header("📋 Informe del Agente")
-        
-        # Simulación de lógica de IA (Aquí es donde el Agente 'piensa')
-        t1, t2, t3 = st.tabs(["📊 Análisis de Brechas", "❓ Guía de Entrevista", "📍 Datos Demográficos"])
-        
-        with t1:
-            st.subheader("Comparativa de Competencias")
-            st.info("El agente está analizando las palabras clave y experiencias...")
-            # Aquí el código procesa la comparación
-            st.warning("**Alerta de Brecha:** El candidato menciona experiencia en liderazgo, pero no especifica manejo de presupuestos, que es vital para la vacante.")
-        
-        with t2:
-            st.subheader("Preguntas Orientadoras Sugeridas")
-            st.write("1. 'En su CV menciona que trabajó en X, ¿podría detallar cómo manejó la ubicación geográfica si reside en Chigorodó?'")
-            st.write("2. 'La vacante requiere manejo de software Y, ¿qué nivel de dominio real tiene?'")
-            st.write("3. 'Cuénteme una situación donde haya tenido que resolver un conflicto de equipo.'")
+        with st.spinner("Gemini está analizando..."):
+            prompt = f"""
+            Actúa como un psicólogo experto en selección de talento humano. 
+            Compara la VACANTE con el CV y entrega un informe detallado:
+            1. Datos demográficos y ubicación.
+            2. Análisis de brechas (¿Qué le falta?).
+            3. 3 preguntas clave para la entrevista basadas en irregularidades o puntos a profundizar.
             
-        with t3:
-            st.subheader("Ficha del Candidato")
-            st.success("Información extraída con éxito.")
-            st.json({
-                "Ubicación detectada": "Chigorodó / Por confirmar",
-                "Años de experiencia": "Cálculo aproximado: 4 años",
-                "Alertas": "Falta número de teléfono actual"
-            })
+            VACANTE: {vacante_txt}
+            CV: {cv_txt}
+            """
+            response = model.generate_content(prompt)
+            st.divider()
+            st.markdown("### 📋 Informe de Selección")
+            st.write(response.text)
     else:
-        st.error("Por favor, pega ambos textos para poder realizar el análisis.")
+        st.warning("Pega ambos textos para continuar.")
